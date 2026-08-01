@@ -33,24 +33,27 @@ class MarkdownText extends StatelessWidget {
         lineStyle = base?.copyWith(
           fontSize: (base.fontSize ?? 16) + 1,
           fontWeight: FontWeight.w700,
-          color: Colors.white,
+          color: Bx.brass,
           height: 1.4,
+          letterSpacing: -0.1,
         );
       } else if (line.startsWith('## ')) {
         line = line.substring(3);
         lineStyle = base?.copyWith(
           fontSize: (base.fontSize ?? 16) + 3,
           fontWeight: FontWeight.w700,
-          color: Colors.white,
+          color: Bx.brandSoft,
           height: 1.35,
+          letterSpacing: -0.2,
         );
       } else if (line.startsWith('# ')) {
         line = line.substring(2);
         lineStyle = base?.copyWith(
           fontSize: (base.fontSize ?? 16) + 5,
           fontWeight: FontWeight.w700,
-          color: Bx.brandSoft,
+          color: Bx.grove,
           height: 1.3,
+          letterSpacing: -0.3,
         );
       } else if (line.startsWith('- ') || line.startsWith('* ')) {
         line = '  •  ${line.substring(2)}';
@@ -75,11 +78,12 @@ class MarkdownText extends StatelessWidget {
       }
       final token = match.group(0)!;
       if (token.startsWith('**')) {
+        final baseColor = style?.color;
         spans.add(TextSpan(
           text: token.substring(2, token.length - 2),
           style: style?.copyWith(
             fontWeight: FontWeight.w700,
-            color: Colors.white,
+            color: baseColor == Bx.ink ? Bx.brandSoft : baseColor,
           ),
         ));
       } else if (token.startsWith('*')) {
@@ -87,7 +91,7 @@ class MarkdownText extends StatelessWidget {
           text: token.substring(1, token.length - 1),
           style: style?.copyWith(
             fontStyle: FontStyle.italic,
-            color: Bx.brandSoft,
+            color: Bx.muted,
           ),
         ));
       } else if (token.startsWith('`')) {
