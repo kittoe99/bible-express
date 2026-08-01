@@ -27,25 +27,53 @@ class AuthService extends ChangeNotifier {
     });
   }
 
+  /// Server-backed allowlist check (invite-only signups).
+  Future<bool> isSignupEmailAllowed(String email) async {
+    final result = await Supabase.instance.client.rpc(
+      'is_signup_email_allowed',
+      params: {'check_email': email.trim()},
+    );
+    return result == true;
+  }
+
   Future<void> signUp({
     required String email,
     required String password,
     String? displayName,
   }) async {
-    final res = await Supabase.instance.client.auth.signUp(
-      email: email.trim(),
-      password: password,
-      data: {
-        if (displayName != null && displayName.trim().isNotEmpty)
-          'display_name': displayName.trim(),
-      },
-    );
-    if (res.user == null) {
-      throw AuthException('Sign up failed. Please try again.');
+    final trimmed = email.trim();
+    final allowed = await isSignupEmailAllowed(trimmed);
+    if (!allowed) {
+      throw AuthException(
+        'Signups are invite-only. This email is not allowed.',
+      );
     }
-    notifyListeners();
-    if (res.session != null) {
-      await syncAll();
+    try {
+      final res = await Supabase.instance.client.auth.signUp(
+        email: trimmed,
+        password: password,
+        data: {
+          if (displayName != null && displayName.trim().isNotEmpty)
+            'display_name': displayName.trim(),
+        },
+      );
+      if (res.user == null) {
+        throw AuthException('Sign up failed. Please try again.');
+      }
+      notifyListeners();
+      if (res.session != null) {
+        await syncAll();
+      }
+    } on AuthException {
+      rethrow;
+    } catch (e) {
+      final msg = e.toString();
+      if (msg.contains('invite-only') || msg.contains('not allowed')) {
+        throw AuthException(
+          'Signups are invite-only. This email is not allowed.',
+        );
+      }
+      rethrow;
     }
   }
 
