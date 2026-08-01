@@ -2,10 +2,14 @@ name: bible-express
 region: nyc
 services:
   - name: web
-    github:
-      repo: kittoe99/bible-express
+    # Prefer GitHub integration when connected in DO:
+    # github:
+    #   repo: kittoe99/bible-express
+    #   branch: main
+    #   deploy_on_push: true
+    git:
+      repo_clone_url: https://github.com/kittoe99/bible-express.git
       branch: main
-      deploy_on_push: true
     dockerfile_path: Dockerfile
     http_port: 80
     instance_count: 1
