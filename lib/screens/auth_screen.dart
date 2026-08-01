@@ -7,7 +7,10 @@ import '../theme/responsive.dart';
 import '../widgets/app_atmosphere.dart';
 
 class AuthScreen extends StatefulWidget {
-  const AuthScreen({super.key});
+  /// When true, auth is required to continue (no back / dismiss).
+  final bool requiredAuth;
+
+  const AuthScreen({super.key, this.requiredAuth = false});
 
   @override
   State<AuthScreen> createState() => _AuthScreenState();
@@ -57,7 +60,9 @@ class _AuthScreenState extends State<AuthScreen> {
           displayName: _name.text,
         );
         if (AuthService.instance.isSignedIn) {
-          if (mounted) Navigator.of(context).pop(true);
+          if (mounted && !widget.requiredAuth) {
+            Navigator.of(context).pop(true);
+          }
         } else {
           setState(() {
             _info =
@@ -70,7 +75,9 @@ class _AuthScreenState extends State<AuthScreen> {
           email: _email.text,
           password: _password.text,
         );
-        if (mounted) Navigator.of(context).pop(true);
+        if (mounted && !widget.requiredAuth) {
+          Navigator.of(context).pop(true);
+        }
       }
     } catch (e) {
       setState(() => _error = e.toString().replaceFirst('AuthException: ', ''));
@@ -91,10 +98,13 @@ class _AuthScreenState extends State<AuthScreen> {
   Widget build(BuildContext context) {
     final desktop = !BxLayout.isCompact(context);
 
-    return Scaffold(
-      body: AtmosphereBackground(
-        child: SafeArea(
-          child: desktop ? _buildDesktop() : _buildCompact(),
+    return PopScope(
+      canPop: !widget.requiredAuth,
+      child: Scaffold(
+        body: AtmosphereBackground(
+          child: SafeArea(
+            child: desktop ? _buildDesktop() : _buildCompact(),
+          ),
         ),
       ),
     );
@@ -104,13 +114,16 @@ class _AuthScreenState extends State<AuthScreen> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
       children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: IconButton(
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.arrow_back_rounded),
-          ),
-        ),
+        if (!widget.requiredAuth)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: IconButton(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.arrow_back_rounded),
+            ),
+          )
+        else
+          const SizedBox(height: 12),
         const SizedBox(height: 12),
         const BrandMark(size: 38),
         const SizedBox(height: 14),
@@ -126,15 +139,16 @@ class _AuthScreenState extends State<AuthScreen> {
   Widget _buildDesktop() {
     return Stack(
       children: [
-        Positioned(
-          top: 8,
-          left: 12,
-          child: IconButton(
-            tooltip: 'Back',
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.arrow_back_rounded),
+        if (!widget.requiredAuth)
+          Positioned(
+            top: 8,
+            left: 12,
+            child: IconButton(
+              tooltip: 'Back',
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.arrow_back_rounded),
+            ),
           ),
-        ),
         Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 980, maxHeight: 640),
@@ -205,7 +219,9 @@ class _AuthScreenState extends State<AuthScreen> {
         ),
         const SizedBox(height: 16),
         Text(
-          'Sign in to sync reading progress, highlights,\nnotes, and AI chats across every device.',
+          widget.requiredAuth
+              ? 'Sign in to open Bible Xpress on the web.\nAccounts are invite-only.'
+              : 'Sign in to sync reading progress, highlights,\nnotes, and AI chats across every device.',
           style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                 color: Bx.muted,
                 height: 1.5,
@@ -216,6 +232,16 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   List<Widget> _headlineBlock({required bool compact}) {
+    final subtitle = widget.requiredAuth
+        ? (_signUp
+            ? 'Create an allowed account to continue.'
+            : 'Sign in to continue to Bible Xpress.')
+        : (compact
+            ? 'Sync reading progress, highlights, and AI chats across devices.'
+            : (_signUp
+                ? 'A few details and you’re ready to sync.'
+                : 'Continue where you left off.'));
+
     return [
       Text(
         _signUp ? 'Create your account' : 'Welcome back',
@@ -225,11 +251,7 @@ class _AuthScreenState extends State<AuthScreen> {
       ),
       const SizedBox(height: 8),
       Text(
-        compact
-            ? 'Sync reading progress, highlights, and AI chats across devices.'
-            : (_signUp
-                ? 'A few details and you’re ready to sync.'
-                : 'Continue where you left off.'),
+        subtitle,
         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
               color: Bx.muted,
             ),

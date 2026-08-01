@@ -1,9 +1,11 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'config/supabase_config.dart';
 import 'data/bible_data.dart';
+import 'screens/auth_screen.dart';
 import 'screens/home_screen.dart';
 import 'services/auth_service.dart';
 import 'services/chatbot_store.dart';
@@ -164,8 +166,42 @@ class _AppBootstrapState extends State<_AppBootstrap>
             ),
           );
         }
-        return const HomeScreen();
+        return const _AppRoot();
       },
     );
+  }
+}
+
+/// Web: require sign-in before the app is usable. Native keeps optional auth.
+class _AppRoot extends StatefulWidget {
+  const _AppRoot();
+
+  @override
+  State<_AppRoot> createState() => _AppRootState();
+}
+
+class _AppRootState extends State<_AppRoot> {
+  @override
+  void initState() {
+    super.initState();
+    AuthService.instance.addListener(_onAuth);
+  }
+
+  @override
+  void dispose() {
+    AuthService.instance.removeListener(_onAuth);
+    super.dispose();
+  }
+
+  void _onAuth() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (kIsWeb && !AuthService.instance.isSignedIn) {
+      return const AuthScreen(requiredAuth: true);
+    }
+    return const HomeScreen();
   }
 }
