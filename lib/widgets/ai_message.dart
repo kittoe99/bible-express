@@ -56,7 +56,7 @@ class AiUserMessage extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 14),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.82,
+          maxWidth: (MediaQuery.sizeOf(context).width * 0.82).clamp(0, 420),
         ),
         decoration: const BoxDecoration(
           color: Bx.grove,

@@ -30,6 +30,11 @@ class _HomeScreenState extends State<HomeScreen>
   late final AnimationController _entrance;
   String _query = '';
 
+  /// Desktop embedded reader (keeps left nav visible).
+  String? _readingBook;
+  int _readingChapter = 1;
+  String? _readingConversationId;
+
   @override
   void initState() {
     super.initState();
@@ -211,10 +216,26 @@ class _HomeScreenState extends State<HomeScreen>
     controller.dispose();
   }
 
-  void _openBook(String book, {int chapter = 1}) {
+  void _openBook(
+    String book, {
+    int chapter = 1,
+    String? conversationId,
+  }) {
+    if (!BxLayout.isCompact(context)) {
+      setState(() {
+        _readingBook = book;
+        _readingChapter = chapter;
+        _readingConversationId = conversationId;
+      });
+      return;
+    }
     Navigator.of(context).push(
       PageRouteBuilder(
-        pageBuilder: (_, a, __) => ReadingScreen(book: book, chapter: chapter),
+        pageBuilder: (_, a, __) => ReadingScreen(
+          book: book,
+          chapter: chapter,
+          initialConversationId: conversationId,
+        ),
         transitionsBuilder: (_, a, __, child) {
           return FadeTransition(
             opacity: a,
@@ -229,6 +250,13 @@ class _HomeScreenState extends State<HomeScreen>
         },
       ),
     );
+  }
+
+  void _closeReading() {
+    setState(() {
+      _readingBook = null;
+      _readingConversationId = null;
+    });
   }
 
   static const _destinations = [
@@ -296,6 +324,8 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _buildDesktopShell(List<Widget> pages) {
+    final reading = _readingBook;
+
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -303,14 +333,31 @@ class _HomeScreenState extends State<HomeScreen>
           animation: _tabs,
           builder: (context, _) {
             return _DesktopSideNav(
-              selectedIndex: _tabs.index,
-              onSelect: (i) => _tabs.animateTo(i),
+              selectedIndex: reading != null ? -1 : _tabs.index,
+              onSelect: (i) {
+                // Switching tabs returns to browse mode.
+                if (reading != null) _closeReading();
+                _tabs.animateTo(i);
+              },
               actions: _headerActions(),
               destinations: _destinations,
             );
           },
         ),
-        Expanded(child: _animatedBody(pages)),
+        Expanded(
+          child: reading != null
+              ? ReadingScreen(
+                  key: ValueKey(
+                    '$reading-$_readingChapter-${_readingConversationId ?? ''}',
+                  ),
+                  book: reading,
+                  chapter: _readingChapter,
+                  initialConversationId: _readingConversationId,
+                  embedded: true,
+                  onClose: _closeReading,
+                )
+              : _animatedBody(pages),
+        ),
       ],
     );
   }
@@ -319,10 +366,13 @@ class _HomeScreenState extends State<HomeScreen>
     return [
       IconButton(
         tooltip: 'Search Scripture',
-        onPressed: () {
-          Navigator.of(context).push(
+        onPressed: () async {
+          final result = await Navigator.of(context).push<({String book, int chapter})>(
             MaterialPageRoute(builder: (_) => const SearchScreen()),
           );
+          if (result != null && mounted) {
+            _openBook(result.book, chapter: result.chapter);
+          }
         },
         icon: const Icon(Icons.search_rounded),
       ),
@@ -1005,14 +1055,10 @@ class _HomeScreenState extends State<HomeScreen>
                     .firstOrNull;
                 return _HoverInk(
                   onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => ReadingScreen(
-                          book: c.book,
-                          chapter: c.chapter,
-                          initialConversationId: c.id,
-                        ),
-                      ),
+                    _openBook(
+                      c.book,
+                      chapter: c.chapter,
+                      conversationId: c.id,
                     );
                   },
                   child: Padding(

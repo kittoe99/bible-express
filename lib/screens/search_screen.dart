@@ -5,7 +5,6 @@ import '../data/bible_data.dart';
 import '../data/books_data.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_atmosphere.dart';
-import 'reading_screen.dart';
 
 class _SearchResult {
   final String book;
@@ -140,14 +139,10 @@ class _SearchScreenState extends State<SearchScreen> {
                           return InkWell(
                             borderRadius: BorderRadius.circular(12),
                             onTap: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) => ReadingScreen(
-                                    book: r.book,
-                                    chapter: r.chapter,
-                                  ),
-                                ),
-                              );
+                              Navigator.of(context).pop((
+                                book: r.book,
+                                chapter: r.chapter,
+                              ));
                             },
                             child: Padding(
                               padding: const EdgeInsets.symmetric(vertical: 14),

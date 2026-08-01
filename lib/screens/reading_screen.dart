@@ -24,11 +24,17 @@ class ReadingScreen extends StatefulWidget {
   final int chapter;
   final String? initialConversationId;
 
+  /// When true, renders inside the home shell (keeps desktop left nav).
+  final bool embedded;
+  final VoidCallback? onClose;
+
   const ReadingScreen({
     super.key,
     required this.book,
     this.chapter = 1,
     this.initialConversationId,
+    this.embedded = false,
+    this.onClose,
   });
 
   @override
@@ -41,6 +47,11 @@ class _ReadingScreenState extends State<ReadingScreen> {
   final _chats = ConversationStore.instance;
   final _notes = NoteStore.instance;
   final _scroll = ScrollController();
+
+  /// Desktop AI side panel (null = closed).
+  int? _aiVerse;
+  Conversation? _aiExisting;
+  Key _aiPanelKey = UniqueKey();
 
   @override
   void initState() {
@@ -64,6 +75,19 @@ class _ReadingScreenState extends State<ReadingScreen> {
     }
   }
 
+  @override
+  void didUpdateWidget(covariant ReadingScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.book != widget.book || oldWidget.chapter != widget.chapter) {
+      _currentChapter = widget.chapter;
+      _closeAiPanel();
+      ReadingHistory.instance.recordReading(widget.book, _currentChapter);
+      if (_scroll.hasClients) {
+        _scroll.jumpTo(0);
+      }
+    }
+  }
+
   void _refresh() => setState(() {});
 
   @override
@@ -77,9 +101,30 @@ class _ReadingScreenState extends State<ReadingScreen> {
 
   int get _maxChapter => chapterCount(widget.book);
 
+  bool get _desktop => !BxLayout.isCompact(context);
+
+  void _closeReader() {
+    if (widget.onClose != null) {
+      widget.onClose!();
+    } else if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  void _closeAiPanel() {
+    setState(() {
+      _aiVerse = null;
+      _aiExisting = null;
+    });
+  }
+
   Future<void> _goToChapter(int chapter) async {
     if (chapter < 1 || chapter > _maxChapter) return;
-    setState(() => _currentChapter = chapter);
+    setState(() {
+      _currentChapter = chapter;
+      _aiVerse = null;
+      _aiExisting = null;
+    });
     await ReadingHistory.instance.recordReading(widget.book, chapter);
   }
 
@@ -320,6 +365,14 @@ class _ReadingScreenState extends State<ReadingScreen> {
   }
 
   void _openAiChat(int verse, {Conversation? existing}) {
+    if (_desktop) {
+      setState(() {
+        _aiVerse = verse;
+        _aiExisting = existing;
+        _aiPanelKey = UniqueKey();
+      });
+      return;
+    }
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -337,108 +390,138 @@ class _ReadingScreenState extends State<ReadingScreen> {
   Widget build(BuildContext context) {
     final verses = BibleData.instance.getVerses(widget.book, _currentChapter);
     final scheme = Theme.of(context).colorScheme;
+    final showAi = _desktop && _aiVerse != null;
 
-    return Scaffold(
-      body: AtmosphereBackground(
-        compact: true,
-        child: Column(
-          children: [
-            SafeArea(
-              bottom: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(4, 4, 8, 0),
-                child: Row(
+    final readerColumn = Column(
+      children: [
+        Padding(
+          padding: EdgeInsets.fromLTRB(widget.embedded ? 8 : 4, 4, 8, 0),
+          child: Row(
+            children: [
+              IconButton(
+                tooltip: 'Back',
+                onPressed: _closeReader,
+                icon: const Icon(Icons.arrow_back_rounded),
+              ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    IconButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.arrow_back_rounded),
+                    Text(
+                      widget.book,
+                      style: Theme.of(context).textTheme.headlineSmall,
                     ),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.book,
-                            style: Theme.of(context).textTheme.headlineSmall,
-                          ),
-                          Text(
-                            'Chapter $_currentChapter',
-                            style: Theme.of(context).textTheme.labelMedium,
-                          ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: _store.highlightMode
-                          ? 'Highlight mode on'
-                          : 'Highlight mode',
-                      onPressed: () =>
-                          _store.setHighlightMode(!_store.highlightMode),
-                      icon: Icon(
-                        Icons.highlight_rounded,
-                        color: _store.highlightMode ? Bx.brass : null,
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: 'Jump to Chapter',
-                      onPressed: _jumpDialog,
-                      icon: const Icon(Icons.tag_rounded),
+                    Text(
+                      'Chapter $_currentChapter',
+                      style: Theme.of(context).textTheme.labelMedium,
                     ),
                   ],
                 ),
               ),
-            ),
-            Expanded(
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 280),
-                switchInCurve: Curves.easeOut,
-                switchOutCurve: Curves.easeIn,
-                child: KeyedSubtree(
-                  key: ValueKey(_currentChapter),
-                  child: BxLayout.constrain(
-                    context,
-                    maxWidth: BxLayout.readingMax,
-                    child: ListView.builder(
-                      controller: _scroll,
-                      padding: EdgeInsets.fromLTRB(
-                        BxLayout.isCompact(context) ? 22 : 28,
-                        12,
-                        BxLayout.isCompact(context) ? 22 : 28,
-                        28,
-                      ),
-                      itemCount: verses.length + 1,
-                      itemBuilder: (context, index) {
-                        if (index == 0) {
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 18),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  '${widget.book} $_currentChapter',
-                                  style: GoogleFonts.instrumentSerif(
-                                    fontSize:
-                                        BxLayout.isCompact(context) ? 28 : 34,
-                                    fontWeight: FontWeight.w400,
-                                    color: Bx.ink,
-                                    height: 1.15,
-                                    letterSpacing: -0.4,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        }
-                        return _buildVerseRow(verses[index - 1], scheme);
-                      },
-                    ),
+              IconButton(
+                tooltip: _store.highlightMode
+                    ? 'Highlight mode on'
+                    : 'Highlight mode',
+                onPressed: () =>
+                    _store.setHighlightMode(!_store.highlightMode),
+                icon: Icon(
+                  Icons.highlight_rounded,
+                  color: _store.highlightMode ? Bx.brass : null,
+                ),
+              ),
+              IconButton(
+                tooltip: 'Jump to Chapter',
+                onPressed: _jumpDialog,
+                icon: const Icon(Icons.tag_rounded),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 280),
+            switchInCurve: Curves.easeOut,
+            switchOutCurve: Curves.easeIn,
+            child: KeyedSubtree(
+              key: ValueKey('${widget.book}-$_currentChapter'),
+              child: BxLayout.constrain(
+                context,
+                maxWidth: showAi ? 640 : BxLayout.readingMax,
+                child: ListView.builder(
+                  controller: _scroll,
+                  padding: EdgeInsets.fromLTRB(
+                    BxLayout.isCompact(context) ? 22 : 28,
+                    12,
+                    BxLayout.isCompact(context) ? 22 : 28,
+                    28,
                   ),
+                  itemCount: verses.length + 1,
+                  itemBuilder: (context, index) {
+                    if (index == 0) {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 18),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${widget.book} $_currentChapter',
+                              style: GoogleFonts.instrumentSerif(
+                                fontSize:
+                                    BxLayout.isCompact(context) ? 28 : 34,
+                                fontWeight: FontWeight.w400,
+                                color: Bx.ink,
+                                height: 1.15,
+                                letterSpacing: -0.4,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+                    return _buildVerseRow(verses[index - 1], scheme);
+                  },
                 ),
               ),
             ),
-            _buildChapterNav(scheme),
-          ],
+          ),
         ),
+        _buildChapterNav(scheme),
+      ],
+    );
+
+    final body = showAi
+        ? Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(flex: 5, child: readerColumn),
+              Container(
+                width: 1,
+                color: Bx.borderStrong,
+              ),
+              Expanded(
+                flex: 4,
+                child: _AIChatSheet(
+                  key: _aiPanelKey,
+                  book: widget.book,
+                  chapter: _currentChapter,
+                  verse: _aiVerse!,
+                  existing: _aiExisting,
+                  asPanel: true,
+                  onClose: _closeAiPanel,
+                ),
+              ),
+            ],
+          )
+        : readerColumn;
+
+    if (widget.embedded) {
+      return body;
+    }
+
+    return Scaffold(
+      body: AtmosphereBackground(
+        compact: true,
+        child: SafeArea(child: body),
       ),
     );
   }
@@ -621,12 +704,17 @@ class _AIChatSheet extends StatefulWidget {
   final int chapter;
   final int verse;
   final Conversation? existing;
+  final bool asPanel;
+  final VoidCallback? onClose;
 
   const _AIChatSheet({
+    super.key,
     required this.book,
     required this.chapter,
     required this.verse,
     this.existing,
+    this.asPanel = false,
+    this.onClose,
   });
 
   @override
@@ -902,82 +990,97 @@ class _AIChatSheetState extends State<_AIChatSheet> {
     return t.startsWith('Please explain ${widget.book}');
   }
 
+  void _dismiss() {
+    _commitStreamBufferSync();
+    if (widget.onClose != null) {
+      widget.onClose!();
+    } else if (Navigator.of(context).canPop()) {
+      Navigator.pop(context);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final height = MediaQuery.of(context).size.height * 0.88;
     final verse = BibleData.instance
         .getVerse(widget.book, widget.chapter, widget.verse);
 
+    final column = Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+          child: Row(
+            children: [
+              const Icon(Icons.auto_awesome, color: Bx.grove),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'AI Chat · ${widget.book} ${widget.chapter}:${widget.verse}',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              IconButton(
+                onPressed: _dismiss,
+                icon: const Icon(Icons.close),
+              ),
+            ],
+          ),
+        ),
+        if (verse != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 16, 8),
+            child: _CollapsibleVerseTopic(
+              reference: '${widget.book} ${widget.chapter}:${widget.verse}',
+              verseText: '${verse.number}. ${verse.text}',
+              expanded: _verseExpanded,
+              onToggle: () =>
+                  setState(() => _verseExpanded = !_verseExpanded),
+            ),
+          ),
+        Expanded(
+          child: ListView(
+            controller: _scroll,
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+            children: [
+              for (final m in _conversation.messages)
+                if (!_streaming || m.id != _streamingMessageId)
+                  if (_isSeedExplainPrompt(m))
+                    const SizedBox.shrink()
+                  else if (m.role == 'assistant')
+                    AiAssistantMessage(
+                      content: m.content,
+                      messageId: m.id,
+                    )
+                  else
+                    AiUserMessage(content: m.content),
+              if (_streaming)
+                AiAssistantMessage(
+                  content: _streamBuffer,
+                  thinking: true,
+                  messageId: _streamingMessageId,
+                ),
+            ],
+          ),
+        ),
+        _buildChatInput(),
+      ],
+    );
+
+    if (widget.asPanel) {
+      return ColoredBox(
+        color: Bx.paper.withValues(alpha: 0.55),
+        child: column,
+      );
+    }
+
+    final height = MediaQuery.of(context).size.height * 0.88;
     return PopScope(
       onPopInvokedWithResult: (didPop, _) {
         _commitStreamBufferSync();
       },
       child: SizedBox(
-      height: height,
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
-            child: Row(
-              children: [
-                const Icon(Icons.auto_awesome),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'AI Chat · ${widget.book} ${widget.chapter}:${widget.verse}',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                ),
-                IconButton(
-                  onPressed: () {
-                    _commitStreamBufferSync();
-                    Navigator.pop(context);
-                  },
-                  icon: const Icon(Icons.close),
-                ),
-              ],
-            ),
-          ),
-          if (verse != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 16, 8),
-              child: _CollapsibleVerseTopic(
-                reference: '${widget.book} ${widget.chapter}:${widget.verse}',
-                verseText: '${verse.number}. ${verse.text}',
-                expanded: _verseExpanded,
-                onToggle: () =>
-                    setState(() => _verseExpanded = !_verseExpanded),
-              ),
-            ),
-          Expanded(
-            child: ListView(
-              controller: _scroll,
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-              children: [
-                for (final m in _conversation.messages)
-                  if (!_streaming || m.id != _streamingMessageId)
-                    if (_isSeedExplainPrompt(m))
-                      const SizedBox.shrink()
-                    else if (m.role == 'assistant')
-                      AiAssistantMessage(
-                        content: m.content,
-                        messageId: m.id,
-                      )
-                    else
-                      AiUserMessage(content: m.content),
-                if (_streaming)
-                  AiAssistantMessage(
-                    content: _streamBuffer,
-                    thinking: true,
-                    messageId: _streamingMessageId,
-                  ),
-              ],
-            ),
-          ),
-          _buildChatInput(),
-        ],
+        height: height,
+        child: column,
       ),
-    ),
     );
   }
 
