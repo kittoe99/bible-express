@@ -22,7 +22,7 @@ Future<void> openNoteEditor(
   await Navigator.of(context).push<void>(
     MaterialPageRoute(
       fullscreenDialog: true,
-      builder: (_) => _NoteDocumentPage(
+      builder: (_) => NoteDocumentPanel(
         book: book,
         chapter: chapter,
         verse: verse,
@@ -147,24 +147,32 @@ Future<void> openNoteChooser(
   );
 }
 
-class _NoteDocumentPage extends StatefulWidget {
+/// Note document UI — full-screen route or embedded desktop panel.
+class NoteDocumentPanel extends StatefulWidget {
   final String book;
   final int chapter;
   final int verse;
   final BibleNote? existing;
 
-  const _NoteDocumentPage({
+  /// When true, renders without scaffold / atmosphere (inside a split pane).
+  final bool embedded;
+  final VoidCallback? onClose;
+
+  const NoteDocumentPanel({
+    super.key,
     required this.book,
     required this.chapter,
     required this.verse,
     this.existing,
+    this.embedded = false,
+    this.onClose,
   });
 
   @override
-  State<_NoteDocumentPage> createState() => _NoteDocumentPageState();
+  State<NoteDocumentPanel> createState() => _NoteDocumentPanelState();
 }
 
-class _NoteDocumentPageState extends State<_NoteDocumentPage> {
+class _NoteDocumentPanelState extends State<NoteDocumentPanel> {
   late BibleNote _note;
   late final TextEditingController _title;
   late final TextEditingController _body;
@@ -213,6 +221,21 @@ class _NoteDocumentPageState extends State<_NoteDocumentPage> {
     _body.addListener(_scheduleSave);
   }
 
+  @override
+  void didUpdateWidget(covariant NoteDocumentPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final next = widget.existing;
+    if (next != null &&
+        next.id != oldWidget.existing?.id &&
+        next.id != _note.id) {
+      _debounce?.cancel();
+      _isNew = false;
+      _note = next;
+      _title.text = next.title;
+      _body.text = next.body;
+    }
+  }
+
   void _scheduleSave() {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 450), _persist);
@@ -252,7 +275,12 @@ class _NoteDocumentPageState extends State<_NoteDocumentPage> {
         await NoteStore.instance.deleteNote(_note.id);
       }
     }
-    if (mounted) Navigator.of(context).pop();
+    if (!mounted) return;
+    if (widget.embedded) {
+      widget.onClose?.call();
+    } else {
+      Navigator.of(context).pop();
+    }
   }
 
   Future<void> _deleteNote() async {
@@ -277,7 +305,12 @@ class _NoteDocumentPageState extends State<_NoteDocumentPage> {
     );
     if (ok == true) {
       await NoteStore.instance.deleteNote(id);
-      if (mounted) Navigator.of(context).pop();
+      if (!mounted) return;
+      if (widget.embedded) {
+        widget.onClose?.call();
+      } else {
+        Navigator.of(context).pop();
+      }
     }
   }
 
@@ -313,6 +346,23 @@ class _NoteDocumentPageState extends State<_NoteDocumentPage> {
   void dispose() {
     _disposed = true;
     _debounce?.cancel();
+    if (_note.id.isNotEmpty) {
+      final snapshot = BibleNote(
+        id: _note.id,
+        book: _note.book,
+        chapter: _note.chapter,
+        verse: _note.verse,
+        title: _title.text,
+        body: _body.text,
+        createdAt: _note.createdAt,
+        updatedAt: DateTime.now(),
+      );
+      if (_isNew && !snapshot.hasContent) {
+        NoteStore.instance.deleteNote(snapshot.id);
+      } else {
+        NoteStore.instance.upsertNote(snapshot);
+      }
+    }
     _title.dispose();
     _body.dispose();
     _bodyFocus.dispose();
@@ -324,8 +374,167 @@ class _NoteDocumentPageState extends State<_NoteDocumentPage> {
           ? '${_note.book} ${_note.chapter}:${_note.verse}'
           : '${_note.book} ${_note.chapter}';
 
+  Widget _editorBody() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 0, 4, 0),
+          child: Row(
+            children: [
+              IconButton(
+                tooltip: 'Close',
+                onPressed: _flushAndClose,
+                icon: const Icon(Icons.close_rounded),
+              ),
+              Expanded(
+                child: AnimatedOpacity(
+                  opacity: _saving ? 1 : 0,
+                  duration: const Duration(milliseconds: 200),
+                  child: Text(
+                    'Saving…',
+                    style: Theme.of(context)
+                        .textTheme
+                        .labelSmall
+                        ?.copyWith(color: Bx.muted),
+                  ),
+                ),
+              ),
+              PopupMenuButton<String>(
+                tooltip: 'More',
+                onSelected: (value) {
+                  if (value == 'passage') _changePassage();
+                  if (value == 'delete') _deleteNote();
+                },
+                itemBuilder: (_) => [
+                  const PopupMenuItem(
+                    value: 'passage',
+                    child: Text('Link to passage…'),
+                  ),
+                  if (_note.id.isNotEmpty)
+                    const PopupMenuItem(
+                      value: 'delete',
+                      child: Text('Delete note'),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => _bodyFocus.requestFocus(),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(28, 8, 28, 48),
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(
+                      style: TextButton.styleFrom(
+                        foregroundColor: Bx.grove,
+                        padding: EdgeInsets.zero,
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      onPressed: _changePassage,
+                      child: Text(
+                        _ref,
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.2,
+                          color: Bx.grove,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  TextField(
+                    controller: _title,
+                    style: GoogleFonts.instrumentSerif(
+                      fontSize: 32,
+                      height: 1.2,
+                      letterSpacing: -0.5,
+                      color: Bx.ink,
+                      fontWeight: FontWeight.w400,
+                    ),
+                    textInputAction: TextInputAction.next,
+                    onSubmitted: (_) => _bodyFocus.requestFocus(),
+                    decoration: InputDecoration(
+                      hintText: 'Title',
+                      hintStyle: GoogleFonts.instrumentSerif(
+                        fontSize: 32,
+                        height: 1.2,
+                        letterSpacing: -0.5,
+                        color: Bx.placeholder,
+                        fontWeight: FontWeight.w400,
+                      ),
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      filled: false,
+                      isDense: true,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _body,
+                    focusNode: _bodyFocus,
+                    maxLines: null,
+                    keyboardType: TextInputType.multiline,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 18,
+                      height: 1.7,
+                      letterSpacing: -0.15,
+                      color: Bx.ink,
+                      fontWeight: FontWeight.w400,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: 'Start writing…',
+                      hintStyle: GoogleFonts.plusJakartaSans(
+                        fontSize: 18,
+                        height: 1.7,
+                        letterSpacing: -0.15,
+                        color: Bx.placeholder,
+                      ),
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      filled: false,
+                      isDense: true,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                  const SizedBox(height: 280),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final body = _editorBody();
+    if (widget.embedded) {
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) async {
+          if (didPop) return;
+          await _flushAndClose();
+        },
+        child: body,
+      );
+    }
+
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
@@ -335,154 +544,7 @@ class _NoteDocumentPageState extends State<_NoteDocumentPage> {
       child: Scaffold(
         body: AtmosphereBackground(
           compact: true,
-          child: SafeArea(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(4, 0, 4, 0),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        tooltip: 'Close',
-                        onPressed: _flushAndClose,
-                        icon: const Icon(Icons.close_rounded),
-                      ),
-                      Expanded(
-                        child: AnimatedOpacity(
-                          opacity: _saving ? 1 : 0,
-                          duration: const Duration(milliseconds: 200),
-                          child: Text(
-                            'Saving…',
-                            style: Theme.of(context)
-                                .textTheme
-                                .labelSmall
-                                ?.copyWith(color: Bx.muted),
-                          ),
-                        ),
-                      ),
-                      PopupMenuButton<String>(
-                        tooltip: 'More',
-                        onSelected: (value) {
-                          if (value == 'passage') _changePassage();
-                          if (value == 'delete') _deleteNote();
-                        },
-                        itemBuilder: (_) => [
-                          const PopupMenuItem(
-                            value: 'passage',
-                            child: Text('Link to passage…'),
-                          ),
-                          if (_note.id.isNotEmpty)
-                            const PopupMenuItem(
-                              value: 'delete',
-                              child: Text('Delete note'),
-                            ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => _bodyFocus.requestFocus(),
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(28, 8, 28, 48),
-                      keyboardDismissBehavior:
-                          ScrollViewKeyboardDismissBehavior.onDrag,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: TextButton(
-                              style: TextButton.styleFrom(
-                                foregroundColor: Bx.grove,
-                                padding: EdgeInsets.zero,
-                                minimumSize: Size.zero,
-                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                visualDensity: VisualDensity.compact,
-                              ),
-                              onPressed: _changePassage,
-                              child: Text(
-                                _ref,
-                                style: GoogleFonts.plusJakartaSans(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                  letterSpacing: 0.2,
-                                  color: Bx.grove,
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 18),
-                          TextField(
-                            controller: _title,
-                            style: GoogleFonts.instrumentSerif(
-                              fontSize: 32,
-                              height: 1.2,
-                              letterSpacing: -0.5,
-                              color: Bx.ink,
-                              fontWeight: FontWeight.w400,
-                            ),
-                            textInputAction: TextInputAction.next,
-                            onSubmitted: (_) => _bodyFocus.requestFocus(),
-                            decoration: InputDecoration(
-                              hintText: 'Title',
-                              hintStyle: GoogleFonts.instrumentSerif(
-                                fontSize: 32,
-                                height: 1.2,
-                                letterSpacing: -0.5,
-                                color: Bx.placeholder,
-                                fontWeight: FontWeight.w400,
-                              ),
-                              border: InputBorder.none,
-                              enabledBorder: InputBorder.none,
-                              focusedBorder: InputBorder.none,
-                              filled: false,
-                              isDense: true,
-                              contentPadding: EdgeInsets.zero,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          TextField(
-                            controller: _body,
-                            focusNode: _bodyFocus,
-                            maxLines: null,
-                            keyboardType: TextInputType.multiline,
-                            style: GoogleFonts.plusJakartaSans(
-                              fontSize: 18,
-                              height: 1.7,
-                              letterSpacing: -0.15,
-                              color: Bx.ink,
-                              fontWeight: FontWeight.w400,
-                            ),
-                            decoration: InputDecoration(
-                              hintText: 'Start writing…',
-                              hintStyle: GoogleFonts.plusJakartaSans(
-                                fontSize: 18,
-                                height: 1.7,
-                                letterSpacing: -0.15,
-                                color: Bx.placeholder,
-                              ),
-                              border: InputBorder.none,
-                              enabledBorder: InputBorder.none,
-                              focusedBorder: InputBorder.none,
-                              filled: false,
-                              isDense: true,
-                              contentPadding: EdgeInsets.zero,
-                            ),
-                          ),
-                          // Extra page space so the caret isn't stuck at the fold.
-                          const SizedBox(height: 280),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          child: SafeArea(child: body),
         ),
       ),
     );

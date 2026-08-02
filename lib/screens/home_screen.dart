@@ -30,10 +30,15 @@ class _HomeScreenState extends State<HomeScreen>
   late final AnimationController _entrance;
   String _query = '';
 
-  /// Desktop embedded reader (keeps left nav visible).
+  /// Desktop embedded reader (detail pane beside the active tab).
   String? _readingBook;
   int _readingChapter = 1;
   String? _readingConversationId;
+
+  /// Desktop Notes master-detail selection.
+  String? _selectedNoteId;
+  bool _composingNewNote = false;
+  int _newNoteEpoch = 0;
 
   @override
   void initState() {
@@ -259,6 +264,151 @@ class _HomeScreenState extends State<HomeScreen>
     });
   }
 
+  void _closeNoteDetail() {
+    setState(() {
+      _selectedNoteId = null;
+      _composingNewNote = false;
+    });
+  }
+
+  void _selectNote(String id) {
+    setState(() {
+      _selectedNoteId = id;
+      _composingNewNote = false;
+    });
+  }
+
+  void _startNewNoteDesktop() {
+    setState(() {
+      _composingNewNote = true;
+      _selectedNoteId = null;
+      _newNoteEpoch++;
+    });
+  }
+
+  void _onDesktopNavSelect(int i) {
+    if (_readingBook != null) _closeReading();
+    if (i != 3) _closeNoteDetail();
+    _tabs.animateTo(i);
+  }
+
+  Widget _desktopMasterDetail({
+    required Widget master,
+    required Widget detail,
+    int masterFlex = 4,
+    int detailFlex = 6,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(flex: masterFlex, child: master),
+        Container(width: 1, color: Bx.borderStrong),
+        Expanded(flex: detailFlex, child: detail),
+      ],
+    );
+  }
+
+  Widget _desktopReadingPane({
+    String emptyTitle = 'Open a book',
+    String emptyBody = 'Choose something from the list to read beside it.',
+  }) {
+    final reading = _readingBook;
+    if (reading != null) {
+      return ReadingScreen(
+        key: ValueKey(
+          '$reading-$_readingChapter-${_readingConversationId ?? ''}',
+        ),
+        book: reading,
+        chapter: _readingChapter,
+        initialConversationId: _readingConversationId,
+        embedded: true,
+        onClose: _closeReading,
+      );
+    }
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.menu_book_outlined,
+              size: 40,
+              color: Bx.grove.withValues(alpha: 0.7),
+            ),
+            const SizedBox(height: 14),
+            Text(emptyTitle, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Text(
+              emptyBody,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Bx.muted,
+                  ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _desktopNotePane() {
+    if (_composingNewNote) {
+      final last = ReadingHistory.instance.continueReading;
+      return NoteDocumentPanel(
+        key: ValueKey('new-note-$_newNoteEpoch'),
+        book: last?.book ?? 'Genesis',
+        chapter: last?.chapter ?? 1,
+        verse: last?.verse ?? 0,
+        embedded: true,
+        onClose: _closeNoteDetail,
+      );
+    }
+    final id = _selectedNoteId;
+    if (id != null) {
+      final note = NoteStore.instance.getNote(id);
+      if (note != null) {
+        return NoteDocumentPanel(
+          key: ValueKey(note.id),
+          book: note.book,
+          chapter: note.chapter,
+          verse: note.verse,
+          existing: note,
+          embedded: true,
+          onClose: _closeNoteDetail,
+        );
+      }
+    }
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.edit_note_rounded,
+              size: 40,
+              color: Bx.grove.withValues(alpha: 0.7),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              'Select a note',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Pick one from the list, or create a new note.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Bx.muted,
+                  ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   static const _destinations = [
     (Icons.menu_book_outlined, Icons.menu_book_rounded, 'Library'),
     (Icons.history_outlined, Icons.history_rounded, 'History'),
@@ -324,8 +474,6 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _buildDesktopShell(List<Widget> pages) {
-    final reading = _readingBook;
-
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -333,31 +481,14 @@ class _HomeScreenState extends State<HomeScreen>
           animation: _tabs,
           builder: (context, _) {
             return _DesktopSideNav(
-              selectedIndex: reading != null ? -1 : _tabs.index,
-              onSelect: (i) {
-                // Switching tabs returns to browse mode.
-                if (reading != null) _closeReading();
-                _tabs.animateTo(i);
-              },
+              selectedIndex: _tabs.index,
+              onSelect: _onDesktopNavSelect,
               actions: _headerActions(),
               destinations: _destinations,
             );
           },
         ),
-        Expanded(
-          child: reading != null
-              ? ReadingScreen(
-                  key: ValueKey(
-                    '$reading-$_readingChapter-${_readingConversationId ?? ''}',
-                  ),
-                  book: reading,
-                  chapter: _readingChapter,
-                  initialConversationId: _readingConversationId,
-                  embedded: true,
-                  onClose: _closeReading,
-                )
-              : _animatedBody(pages),
-        ),
+        Expanded(child: _animatedBody(pages)),
       ],
     );
   }
@@ -425,109 +556,131 @@ class _HomeScreenState extends State<HomeScreen>
     final ot = books.where((b) => b.isOldTestament).toList();
     final nt = books.where((b) => !b.isOldTestament).toList();
     final wide = !BxLayout.isCompact(context);
-    final headlineSize = wide ? 40.0 : 32.0;
-    final accentSize = wide ? 42.0 : 34.0;
+    final headlineSize = wide ? 34.0 : 32.0;
+    final accentSize = wide ? 36.0 : 34.0;
 
-    return BxLayout.constrain(
-      context,
-      maxWidth: BxLayout.contentMax,
-      child: ListView(
-        padding: BxLayout.pagePadding(context),
-        children: [
-          Text(
-            'King James Version',
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  letterSpacing: 2.2,
-                  color: Bx.grove,
-                  fontWeight: FontWeight.w700,
-                ),
-          ),
-          const SizedBox(height: 8),
-          Text.rich(
-            TextSpan(
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    height: 1.15,
-                    fontSize: headlineSize,
-                  ),
-              children: [
-                TextSpan(
-                  text: wide
-                      ? 'Read with clarity. Ask with '
-                      : 'Read with clarity.\nAsk with ',
-                ),
-                TextSpan(
-                  text: 'wisdom.',
-                  style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                        color: Bx.grove,
-                        fontStyle: FontStyle.italic,
-                        fontSize: accentSize,
-                        height: 1.15,
-                      ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          if (continueReading != null) ...[
-            _ContinueBand(
-              reference: continueReading.reference,
-              onTap: () => _openBook(
-                continueReading.book,
-                chapter: continueReading.chapter,
+    final master = ListView(
+      padding: wide
+          ? const EdgeInsets.fromLTRB(24, 16, 20, 40)
+          : BxLayout.pagePadding(context),
+      children: [
+        Text(
+          'King James Version',
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                letterSpacing: 2.2,
+                color: Bx.grove,
+                fontWeight: FontWeight.w700,
               ),
-            ),
-            const SizedBox(height: 22),
-          ],
-          TextField(
-            decoration: const InputDecoration(
-              hintText: 'Find a book…',
-              prefixIcon: Icon(Icons.menu_book_outlined),
-            ),
-            onChanged: (v) => setState(() => _query = v),
+        ),
+        const SizedBox(height: 8),
+        Text.rich(
+          TextSpan(
+            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                  height: 1.15,
+                  fontSize: headlineSize,
+                ),
+            children: [
+              TextSpan(
+                text: wide
+                    ? 'Read with clarity. Ask with '
+                    : 'Read with clarity.\nAsk with ',
+              ),
+              TextSpan(
+                text: 'wisdom.',
+                style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                      color: Bx.grove,
+                      fontStyle: FontStyle.italic,
+                      fontSize: accentSize,
+                      height: 1.15,
+                    ),
+              ),
+            ],
           ),
-          const SizedBox(height: 28),
-          _SectionLabel('Old Testament'),
-          const SizedBox(height: 8),
-          _BookGrid(books: ot, onOpen: _openBook),
-          const SizedBox(height: 28),
-          _SectionLabel('New Testament'),
-          const SizedBox(height: 8),
-          _BookGrid(books: nt, onOpen: _openBook),
+        ),
+        const SizedBox(height: 20),
+        if (continueReading != null) ...[
+          _ContinueBand(
+            reference: continueReading.reference,
+            onTap: () => _openBook(
+              continueReading.book,
+              chapter: continueReading.chapter,
+            ),
+          ),
+          const SizedBox(height: 22),
         ],
+        TextField(
+          decoration: const InputDecoration(
+            hintText: 'Find a book…',
+            prefixIcon: Icon(Icons.menu_book_outlined),
+          ),
+          onChanged: (v) => setState(() => _query = v),
+        ),
+        const SizedBox(height: 28),
+        _SectionLabel('Old Testament'),
+        const SizedBox(height: 8),
+        _BookGrid(books: ot, onOpen: _openBook),
+        const SizedBox(height: 28),
+        _SectionLabel('New Testament'),
+        const SizedBox(height: 8),
+        _BookGrid(books: nt, onOpen: _openBook),
+      ],
+    );
+
+    if (!wide) {
+      return BxLayout.constrain(
+        context,
+        maxWidth: BxLayout.contentMax,
+        child: master,
+      );
+    }
+
+    return _desktopMasterDetail(
+      master: master,
+      detail: _desktopReadingPane(
+        emptyTitle: 'Open a book',
+        emptyBody: 'Pick a book from the library to read beside it.',
       ),
     );
   }
 
   Widget _buildRecentSection(List<ReadingEntry> recent) {
+    final wide = !BxLayout.isCompact(context);
+
+    Widget master;
     if (recent.isEmpty) {
-      return BxLayout.constrain(
-        context,
-        maxWidth: BxLayout.listMax,
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(32),
-            child: Text(
-              'Your reading path will appear here.',
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: Bx.muted,
-                  ),
-              textAlign: TextAlign.center,
-            ),
+      master = Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Text(
+            'Your reading path will appear here.',
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                  color: Bx.muted,
+                ),
+            textAlign: TextAlign.center,
           ),
         ),
       );
-    }
-    return BxLayout.constrain(
-      context,
-      maxWidth: BxLayout.listMax,
-      child: ListView.builder(
-        padding: BxLayout.pagePadding(context),
+    } else {
+      master = ListView.builder(
+        padding: wide
+            ? const EdgeInsets.fromLTRB(20, 12, 12, 40)
+            : BxLayout.pagePadding(context),
         itemCount: recent.length,
         itemBuilder: (context, i) {
           final e = recent[i];
+          final selected = wide &&
+              _readingBook == e.book &&
+              _readingChapter == e.chapter;
           return _HoverInk(
             onTap: () => _openBook(e.book, chapter: e.chapter),
-            child: Padding(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 140),
+              decoration: BoxDecoration(
+                color: selected
+                    ? Bx.grove.withValues(alpha: 0.1)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(12),
+              ),
               padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
               child: Row(
                 children: [
@@ -535,7 +688,7 @@ class _HomeScreenState extends State<HomeScreen>
                     width: 3,
                     height: 36,
                     decoration: BoxDecoration(
-                      color: i == 0 ? Bx.grove : Bx.mistDeep,
+                      color: i == 0 || selected ? Bx.grove : Bx.mistDeep,
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
@@ -557,6 +710,22 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           );
         },
+      );
+    }
+
+    if (!wide) {
+      return BxLayout.constrain(
+        context,
+        maxWidth: BxLayout.listMax,
+        child: master,
+      );
+    }
+
+    return _desktopMasterDetail(
+      master: master,
+      detail: _desktopReadingPane(
+        emptyTitle: 'Continue reading',
+        emptyBody: 'Select a recent passage to open it beside your history.',
       ),
     );
   }
@@ -770,128 +939,133 @@ class _HomeScreenState extends State<HomeScreen>
     final items = NoteStore.instance.savedNotes;
     final signedIn = AuthService.instance.isSignedIn;
     final pending = NoteStore.instance.hasPendingCloudSync;
-    final side = BxLayout.isCompact(context) ? 20.0 : 28.0;
+    final wide = !BxLayout.isCompact(context);
+    final side = wide ? 20.0 : 20.0;
 
-    return BxLayout.constrain(
-      context,
-      maxWidth: BxLayout.listMax,
-      child: Column(
-        children: [
-          Padding(
-            padding: EdgeInsets.fromLTRB(side, 16, side, 8),
+    final master = Column(
+      children: [
+        Padding(
+          padding: EdgeInsets.fromLTRB(side, 16, side, 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'YOUR NOTES',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            letterSpacing: 1.4,
+                            color: Bx.grove,
+                          ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Thoughts on verses and chapters.',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: Bx.muted,
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton.filled(
+                tooltip: 'New note',
+                onPressed: () {
+                  if (wide) {
+                    _startNewNoteDesktop();
+                  } else {
+                    openBlankNote(context);
+                  }
+                },
+                icon: const Icon(Icons.add_rounded),
+              ),
+            ],
+          ),
+        ),
+        if (!signedIn || pending)
+          Container(
+            margin: EdgeInsets.fromLTRB(side, 4, side, 8),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: Bx.mistDeep,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Bx.borderStrong),
+            ),
             child: Row(
               children: [
+                Icon(
+                  signedIn
+                      ? Icons.cloud_upload_outlined
+                      : Icons.cloud_off_outlined,
+                  size: 18,
+                  color: Bx.grove,
+                ),
+                const SizedBox(width: 10),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'YOUR NOTES',
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              letterSpacing: 1.4,
-                              color: Bx.grove,
-                            ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Thoughts on verses and chapters.',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Bx.muted,
-                            ),
-                      ),
-                    ],
+                  child: Text(
+                    signedIn
+                        ? 'Some notes are waiting to sync…'
+                        : 'Sign in to sync notes across devices.',
+                    style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
-                IconButton.filled(
-                  tooltip: 'New note',
-                  onPressed: () => openBlankNote(context),
-                  icon: const Icon(Icons.add_rounded),
-                ),
+                if (!signedIn)
+                  TextButton(
+                    onPressed: _openAuth,
+                    child: const Text('Sign in'),
+                  )
+                else
+                  TextButton(
+                    onPressed: () =>
+                        NoteStore.instance.retryPendingCloudSync(),
+                    child: const Text('Retry'),
+                  ),
               ],
             ),
           ),
-          if (!signedIn || pending)
-            Container(
-              margin: EdgeInsets.fromLTRB(side, 4, side, 8),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: Bx.mistDeep,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: Bx.borderStrong),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    signedIn
-                        ? Icons.cloud_upload_outlined
-                        : Icons.cloud_off_outlined,
-                    size: 18,
-                    color: Bx.grove,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      signedIn
-                          ? 'Some notes are waiting to sync…'
-                          : 'Sign in to sync notes across devices.',
-                      style: Theme.of(context).textTheme.bodySmall,
+        Expanded(
+          child: items.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.edit_note_rounded,
+                          size: 40,
+                          color: Bx.grove.withValues(alpha: 0.75),
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
+                          'No notes yet',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Tap + to start a note, or long-press a verse while reading.',
+                          textAlign: TextAlign.center,
+                          style:
+                              Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    color: Bx.muted,
+                                  ),
+                        ),
+                      ],
                     ),
                   ),
-                  if (!signedIn)
-                    TextButton(
-                      onPressed: _openAuth,
-                      child: const Text('Sign in'),
-                    )
-                  else
-                    TextButton(
-                      onPressed: () =>
-                          NoteStore.instance.retryPendingCloudSync(),
-                      child: const Text('Retry'),
-                    ),
-                ],
-              ),
-            ),
-          Expanded(
-            child: items.isEmpty
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(32),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.edit_note_rounded,
-                            size: 40,
-                            color: Bx.grove.withValues(alpha: 0.75),
-                          ),
-                          const SizedBox(height: 14),
-                          Text(
-                            'No notes yet',
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Tap + to start a note, or long-press a verse while reading.',
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium
-                                ?.copyWith(
-                                  color: Bx.muted,
-                                ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                : ListView.builder(
-                    padding: EdgeInsets.fromLTRB(side, 4, side, 40),
-                    itemCount: items.length,
-                    itemBuilder: (context, i) {
-                      final n = items[i];
-                      return _HoverInk(
-                        onTap: () {
+                )
+              : ListView.builder(
+                  padding: EdgeInsets.fromLTRB(side, 4, side, 40),
+                  itemCount: items.length,
+                  itemBuilder: (context, i) {
+                    final n = items[i];
+                    final selected = wide && _selectedNoteId == n.id;
+                    return _HoverInk(
+                      onTap: () {
+                        if (wide) {
+                          _selectNote(n.id);
+                        } else {
                           openNoteEditor(
                             context,
                             book: n.book,
@@ -899,55 +1073,78 @@ class _HomeScreenState extends State<HomeScreen>
                             verse: n.verse,
                             existing: n,
                           );
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            vertical: 14,
-                            horizontal: 8,
-                          ),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      n.title.trim().isEmpty
-                                          ? n.reference
-                                          : n.title,
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .titleMedium,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      n.title.trim().isEmpty
-                                          ? n.preview
-                                          : '${n.reference} · ${n.preview}',
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style:
-                                          Theme.of(context).textTheme.bodySmall,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline_rounded),
-                                onPressed: () =>
-                                    NoteStore.instance.deleteNote(n.id),
-                              ),
-                            ],
-                          ),
+                        }
+                      },
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 140),
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? Bx.grove.withValues(alpha: 0.1)
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 14,
+                          horizontal: 8,
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    n.title.trim().isEmpty
+                                        ? n.reference
+                                        : n.title,
+                                    style:
+                                        Theme.of(context).textTheme.titleMedium,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    n.title.trim().isEmpty
+                                        ? n.preview
+                                        : '${n.reference} · ${n.preview}',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline_rounded),
+                              onPressed: () {
+                                if (_selectedNoteId == n.id) {
+                                  _closeNoteDetail();
+                                }
+                                NoteStore.instance.deleteNote(n.id);
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+
+    if (!wide) {
+      return BxLayout.constrain(
+        context,
+        maxWidth: BxLayout.listMax,
+        child: master,
+      );
+    }
+
+    return _desktopMasterDetail(
+      master: master,
+      detail: _desktopNotePane(),
     );
   }
 
@@ -955,157 +1152,185 @@ class _HomeScreenState extends State<HomeScreen>
     final items = ConversationStore.instance.savedConversations;
     final signedIn = AuthService.instance.isSignedIn;
     final pending = ConversationStore.instance.hasPendingCloudSync;
-    final side = BxLayout.isCompact(context) ? 20.0 : 28.0;
+    final wide = !BxLayout.isCompact(context);
+    final side = wide ? 20.0 : 20.0;
 
-    if (items.isEmpty) {
+    final emptyMaster = Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.auto_awesome,
+                size: 36, color: Bx.grove.withValues(alpha: 0.7)),
+            const SizedBox(height: 14),
+            Text(
+              'No verse chats yet',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Long-press any verse and choose Explain with AI.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Bx.muted,
+                  ),
+            ),
+            if (!signedIn) ...[
+              const SizedBox(height: 20),
+              FilledButton.tonal(
+                onPressed: _openAuth,
+                child: const Text('Sign in to sync chats'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+
+    final master = items.isEmpty
+        ? emptyMaster
+        : Column(
+            children: [
+              if (!signedIn || pending)
+                Container(
+                  margin: EdgeInsets.fromLTRB(side, 12, side, 0),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Bx.mistDeep,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: Bx.borderStrong),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        signedIn
+                            ? Icons.cloud_sync_outlined
+                            : Icons.cloud_off_outlined,
+                        color: Bx.grove,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          signedIn
+                              ? 'Syncing chats…'
+                              : 'Sign in so chats follow you',
+                          style: Theme.of(context).textTheme.labelLarge,
+                        ),
+                      ),
+                      if (signedIn)
+                        IconButton(
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () => ConversationStore.instance
+                              .retryPendingCloudSync(),
+                          icon: const Icon(Icons.refresh_rounded, size: 20),
+                        )
+                      else
+                        TextButton(
+                          onPressed: _openAuth,
+                          child: const Text('Sign in'),
+                        ),
+                    ],
+                  ),
+                ),
+              Expanded(
+                child: ListView.builder(
+                  padding: EdgeInsets.fromLTRB(side, 12, side, 40),
+                  itemCount: items.length,
+                  itemBuilder: (context, i) {
+                    final c = items[i];
+                    final selected = wide && _readingConversationId == c.id;
+                    final preview = c.messages
+                        .where((m) =>
+                            m.role == 'assistant' && m.content.trim().isNotEmpty)
+                        .map((m) => m.content.trim())
+                        .followedBy(
+                          c.messages
+                              .where((m) => m.content.trim().isNotEmpty)
+                              .map((m) => m.content.trim()),
+                        )
+                        .firstOrNull;
+                    return _HoverInk(
+                      onTap: () {
+                        _openBook(
+                          c.book,
+                          chapter: c.chapter,
+                          conversationId: c.id,
+                        );
+                      },
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 140),
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? Bx.grove.withValues(alpha: 0.1)
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 14,
+                          horizontal: 8,
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    c.title,
+                                    style:
+                                        Theme.of(context).textTheme.titleMedium,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    preview == null
+                                        ? c.reference
+                                        : '${c.reference}  ·  ${preview.length > 90 ? '${preview.substring(0, 90)}…' : preview}',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline_rounded),
+                              onPressed: () {
+                                if (_readingConversationId == c.id) {
+                                  _closeReading();
+                                }
+                                ConversationStore.instance
+                                    .deleteConversation(c.id);
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          );
+
+    if (!wide) {
       return BxLayout.constrain(
         context,
         maxWidth: BxLayout.listMax,
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(32),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.auto_awesome,
-                    size: 36, color: Bx.grove.withValues(alpha: 0.7)),
-                const SizedBox(height: 14),
-                Text(
-                  'No verse chats yet',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Long-press any verse and choose Explain with AI.',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Bx.muted,
-                      ),
-                ),
-                if (!signedIn) ...[
-                  const SizedBox(height: 20),
-                  FilledButton.tonal(
-                    onPressed: _openAuth,
-                    child: const Text('Sign in to sync chats'),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
+        child: master,
       );
     }
 
-    return BxLayout.constrain(
-      context,
-      maxWidth: BxLayout.listMax,
-      child: Column(
-        children: [
-          if (!signedIn || pending)
-            Container(
-              margin: EdgeInsets.fromLTRB(side, 12, side, 0),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: Bx.mistDeep,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: Bx.borderStrong),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    signedIn
-                        ? Icons.cloud_sync_outlined
-                        : Icons.cloud_off_outlined,
-                    color: Bx.grove,
-                    size: 20,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      signedIn
-                          ? 'Syncing chats…'
-                          : 'Sign in so chats follow you',
-                      style: Theme.of(context).textTheme.labelLarge,
-                    ),
-                  ),
-                  if (signedIn)
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      onPressed: () =>
-                          ConversationStore.instance.retryPendingCloudSync(),
-                      icon: const Icon(Icons.refresh_rounded, size: 20),
-                    )
-                  else
-                    TextButton(
-                        onPressed: _openAuth, child: const Text('Sign in')),
-                ],
-              ),
-            ),
-          Expanded(
-            child: ListView.builder(
-              padding: EdgeInsets.fromLTRB(side, 12, side, 40),
-              itemCount: items.length,
-              itemBuilder: (context, i) {
-                final c = items[i];
-                final preview = c.messages
-                    .where((m) =>
-                        m.role == 'assistant' && m.content.trim().isNotEmpty)
-                    .map((m) => m.content.trim())
-                    .followedBy(
-                      c.messages
-                          .where((m) => m.content.trim().isNotEmpty)
-                          .map((m) => m.content.trim()),
-                    )
-                    .firstOrNull;
-                return _HoverInk(
-                  onTap: () {
-                    _openBook(
-                      c.book,
-                      chapter: c.chapter,
-                      conversationId: c.id,
-                    );
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 14,
-                      horizontal: 8,
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(c.title,
-                                  style:
-                                      Theme.of(context).textTheme.titleMedium),
-                              const SizedBox(height: 4),
-                              Text(
-                                preview == null
-                                    ? c.reference
-                                    : '${c.reference}  ·  ${preview.length > 90 ? '${preview.substring(0, 90)}…' : preview}',
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.delete_outline_rounded),
-                          onPressed: () => ConversationStore.instance
-                              .deleteConversation(c.id),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
+    return _desktopMasterDetail(
+      master: master,
+      detail: _desktopReadingPane(
+        emptyTitle: 'Open a saved chat',
+        emptyBody:
+            'Select a verse conversation to read Scripture and continue the AI chat.',
       ),
     );
   }
@@ -1307,7 +1532,12 @@ class _BookGrid extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final cols = BxLayout.bookColumns(context);
+        // Prefer available pane width (master-detail) over full window.
+        final cols = constraints.maxWidth >= 640
+            ? 3
+            : constraints.maxWidth >= 360
+                ? 2
+                : 1;
         const gap = 12.0;
         if (cols == 1) {
           return Column(
