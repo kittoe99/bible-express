@@ -7,14 +7,23 @@ import '../services/ai_service.dart';
 import '../services/auth_service.dart';
 import '../services/chatbot_store.dart';
 import '../theme/app_theme.dart';
+import '../theme/responsive.dart';
 import '../widgets/ai_message.dart';
 import '../widgets/app_atmosphere.dart';
+import '../widgets/ask_bible_panel.dart';
 
 /// Standalone religious chatbot — not tied to verse "Explain with AI".
 class ChatbotScreen extends StatefulWidget {
   final String? initialThreadId;
 
-  const ChatbotScreen({super.key, this.initialThreadId});
+  /// When true, renders inside the home Ask tab (no outer scaffold / route pop).
+  final bool embedded;
+
+  const ChatbotScreen({
+    super.key,
+    this.initialThreadId,
+    this.embedded = false,
+  });
 
   @override
   State<ChatbotScreen> createState() => _ChatbotScreenState();
@@ -66,163 +75,207 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
   }
 
   void _leaveRoom() {
-    if (_openedDirectly) {
+    if (_openedDirectly && !widget.embedded) {
       Navigator.of(context).pop();
     } else {
-      setState(() => _active = null);
+      setState(() {
+        _active = null;
+        _openedDirectly = false;
+      });
     }
+  }
+
+  Widget _chatPane() {
+    if (_active != null) {
+      return _ChatbotRoom(
+        key: ValueKey(_active!.id),
+        thread: _active!,
+        onBack: _leaveRoom,
+        asPanel: true,
+      );
+    }
+    return _buildThreadList(asPanel: true);
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_active != null) {
-      return _ChatbotRoom(
-        thread: _active!,
-        onBack: _leaveRoom,
+    final wide = !BxLayout.isCompact(context);
+
+    if (wide) {
+      final split = Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Expanded(flex: 5, child: AskBiblePanel()),
+          Container(width: 1, color: Bx.borderStrong),
+          Expanded(flex: 4, child: _chatPane()),
+        ],
+      );
+      if (widget.embedded) return split;
+      return Scaffold(
+        body: AtmosphereBackground(
+          compact: true,
+          child: SafeArea(child: split),
+        ),
       );
     }
 
-    final threads = _store.threads;
-    final signedIn = AuthService.instance.isSignedIn;
+    // Compact: full-screen list or room (unchanged flow).
+    if (_active != null) {
+      return _ChatbotRoom(
+        key: ValueKey(_active!.id),
+        thread: _active!,
+        onBack: _leaveRoom,
+        asPanel: false,
+      );
+    }
 
+    final list = _buildThreadList(asPanel: false);
+    if (widget.embedded) return list;
     return Scaffold(
       body: AtmosphereBackground(
-        child: SafeArea(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: SafeArea(child: list),
+      ),
+    );
+  }
+
+  Widget _buildThreadList({required bool asPanel}) {
+    final threads = _store.savedThreads;
+    final signedIn = AuthService.instance.isSignedIn;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: EdgeInsets.fromLTRB(asPanel ? 12 : 8, 8, 12, 0),
+          child: Row(
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(8, 4, 12, 0),
-                child: Row(
-                  children: [
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.arrow_back_rounded),
-                    ),
-                    Expanded(
-                      child: Text(
-                        'Ask',
-                        style: Theme.of(context).textTheme.headlineSmall,
-                      ),
-                    ),
-                    FilledButton.tonalIcon(
-                      onPressed: _startNewChat,
-                      icon: const Icon(Icons.add_rounded, size: 18),
-                      label: const Text('New chat'),
-                    ),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                child: Text(
-                  'Faith, Scripture, prayer, and theology — only.',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Bx.muted,
-                      ),
-                ),
-              ),
-              if (!signedIn)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                  child: Text(
-                    'Sign in to sync these chats across devices.',
-                    style: Theme.of(context).textTheme.labelMedium,
-                  ),
+              if (!widget.embedded && !asPanel)
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.arrow_back_rounded),
                 ),
               Expanded(
-                child: threads.isEmpty
-                    ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(32),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.church_outlined,
-                                size: 40,
-                                color: Bx.grove.withValues(alpha: 0.75),
-                              ),
-                              const SizedBox(height: 14),
-                              Text(
-                                'Start a religious conversation',
-                                style: Theme.of(context).textTheme.titleMedium,
-                                textAlign: TextAlign.center,
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'Ask about Scripture, prayer, doctrine, or Christian living.',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodyMedium
-                                    ?.copyWith(color: Bx.muted),
-                                textAlign: TextAlign.center,
-                              ),
-                              const SizedBox(height: 20),
-                              FilledButton(
-                                onPressed: _startNewChat,
-                                child: const Text('New chat'),
-                              ),
-                            ],
-                          ),
-                        ),
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
-                        itemCount: threads.length,
-                        itemBuilder: (context, i) {
-                          final t = threads[i];
-                          return InkWell(
-                            borderRadius: BorderRadius.circular(12),
-                            onTap: () => setState(() => _active = t),
-                            child: Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 14),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          t.title,
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .titleMedium,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          t.preview,
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodySmall,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(
-                                        Icons.delete_outline_rounded),
-                                    onPressed: () =>
-                                        _store.deleteThread(t.id),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      ),
+                child: Text(
+                  'Ask',
+                  style: asPanel
+                      ? Theme.of(context).textTheme.titleLarge
+                      : Theme.of(context).textTheme.headlineSmall,
+                ),
+              ),
+              FilledButton.tonalIcon(
+                onPressed: _startNewChat,
+                icon: const Icon(Icons.add_rounded, size: 18),
+                label: const Text('New chat'),
               ),
             ],
           ),
         ),
-      ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+          child: Text(
+            asPanel
+                ? 'Ask about Scripture, prayer, or Christian living.'
+                : 'Faith, Scripture, prayer, and theology — only.',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Bx.muted,
+                ),
+          ),
+        ),
+        if (!signedIn)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: Text(
+              'Sign in to sync these chats across devices.',
+              style: Theme.of(context).textTheme.labelMedium,
+            ),
+          ),
+        Expanded(
+          child: threads.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.church_outlined,
+                          size: 40,
+                          color: Bx.grove.withValues(alpha: 0.75),
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
+                          'Start a religious conversation',
+                          style: Theme.of(context).textTheme.titleMedium,
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Ask about Scripture, prayer, doctrine, or Christian living.',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyMedium
+                              ?.copyWith(color: Bx.muted),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 20),
+                        FilledButton(
+                          onPressed: _startNewChat,
+                          child: const Text('New chat'),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 12, 32),
+                  itemCount: threads.length,
+                  itemBuilder: (context, i) {
+                    final t = threads[i];
+                    return InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => setState(() => _active = t),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 14,
+                          horizontal: 8,
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    t.title,
+                                    style:
+                                        Theme.of(context).textTheme.titleMedium,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    t.preview,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline_rounded),
+                              onPressed: () => _store.deleteThread(t.id),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
     );
   }
 }
@@ -230,8 +283,14 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
 class _ChatbotRoom extends StatefulWidget {
   final ChatbotThread thread;
   final VoidCallback onBack;
+  final bool asPanel;
 
-  const _ChatbotRoom({required this.thread, required this.onBack});
+  const _ChatbotRoom({
+    super.key,
+    required this.thread,
+    required this.onBack,
+    this.asPanel = false,
+  });
 
   @override
   State<_ChatbotRoom> createState() => _ChatbotRoomState();
@@ -251,7 +310,6 @@ class _ChatbotRoomState extends State<_ChatbotRoom> {
   void initState() {
     super.initState();
     _thread = widget.thread;
-    // Persist shell immediately so the chat cannot be lost if the user leaves.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_disposed) _persist(_thread);
     });
@@ -262,6 +320,9 @@ class _ChatbotRoomState extends State<_ChatbotRoom> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.thread.id != widget.thread.id) {
       _thread = widget.thread;
+      _streaming = false;
+      _streamBuffer = '';
+      _streamingMessageId = null;
     } else if (!_streaming) {
       _thread = widget.thread;
     }
@@ -278,7 +339,6 @@ class _ChatbotRoomState extends State<_ChatbotRoom> {
 
   void _commitStreamBufferSync() {
     final partial = _streamBuffer.trim();
-    // Only flush an in-progress assistant reply — never recreate deleted stubs.
     if (!_streaming || partial.isEmpty) return;
     final id = _streamingMessageId ?? _uuid.v4();
     final msgs = List<ChatMessage>.from(_thread.messages);
@@ -302,7 +362,9 @@ class _ChatbotRoomState extends State<_ChatbotRoom> {
     final saved = await ChatbotStore.instance.upsertThread(thread);
     await ChatbotStore.instance.maybeAutotitle(saved);
     if (!_disposed && mounted) {
-      setState(() => _thread = ChatbotStore.instance.getThread(saved.id) ?? saved);
+      setState(
+        () => _thread = ChatbotStore.instance.getThread(saved.id) ?? saved,
+      );
     }
   }
 
@@ -420,8 +482,135 @@ class _ChatbotRoomState extends State<_ChatbotRoom> {
     });
   }
 
+  Widget _roomBody() {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 4, 8, 0),
+          child: Row(
+            children: [
+              IconButton(
+                onPressed: _handleBack,
+                icon: const Icon(Icons.arrow_back_rounded),
+              ),
+              Expanded(
+                child: Text(
+                  _thread.title,
+                  style: Theme.of(context).textTheme.titleMedium,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              IconButton(
+                tooltip: 'New chat',
+                onPressed: () async {
+                  _commitStreamBufferSync();
+                  final t = await ChatbotStore.instance.createThread();
+                  if (!mounted) return;
+                  setState(() {
+                    _thread = t;
+                    _streaming = false;
+                    _streamBuffer = '';
+                    _streamingMessageId = null;
+                  });
+                },
+                icon: const Icon(Icons.add_rounded),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Religious guidance only',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: Bx.grove,
+                    letterSpacing: 1.2,
+                  ),
+            ),
+          ),
+        ),
+        Expanded(
+          child: ListView(
+            controller: _scroll,
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            children: [
+              if (_thread.messages.isEmpty && !_streaming)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 24),
+                  child: Text(
+                    'Ask about a passage, prayer, doctrine, or how to walk in faith.',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Bx.muted,
+                        ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              for (final m in _thread.messages)
+                if (!_streaming || m.id != _streamingMessageId)
+                  if (m.role == 'assistant')
+                    AiAssistantMessage(
+                      content: m.content,
+                      messageId: m.id,
+                    )
+                  else
+                    AiUserMessage(content: m.content),
+              if (_streaming)
+                AiAssistantMessage(
+                  content: _streamBuffer,
+                  thinking: true,
+                  messageId: _streamingMessageId,
+                ),
+            ],
+          ),
+        ),
+        SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _input,
+                    enabled: !_streaming,
+                    minLines: 1,
+                    maxLines: 4,
+                    decoration: const InputDecoration(
+                      hintText: 'Ask in faith…',
+                    ),
+                    onSubmitted: (_) => _send(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton.filled(
+                  onPressed: _streaming ? null : _send,
+                  icon: const Icon(Icons.send_rounded),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final body = _roomBody();
+    if (widget.asPanel) {
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) async {
+          if (didPop) return;
+          await _handleBack();
+        },
+        child: body,
+      );
+    }
+
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
@@ -431,123 +620,9 @@ class _ChatbotRoomState extends State<_ChatbotRoom> {
       child: Scaffold(
         body: AtmosphereBackground(
           compact: true,
-          child: SafeArea(
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(4, 4, 8, 0),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        onPressed: _handleBack,
-                        icon: const Icon(Icons.arrow_back_rounded),
-                      ),
-                      Expanded(
-                        child: Text(
-                          _thread.title,
-                          style: Theme.of(context).textTheme.titleMedium,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'New chat',
-                        onPressed: () async {
-                          _commitStreamBufferSync();
-                          final t = await ChatbotStore.instance.createThread();
-                          if (!mounted) return;
-                          setState(() {
-                            _thread = t;
-                            _streaming = false;
-                            _streamBuffer = '';
-                            _streamingMessageId = null;
-                          });
-                        },
-                        icon: const Icon(Icons.add_rounded),
-                      ),
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Religious guidance only',
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            color: Bx.grove,
-                            letterSpacing: 1.2,
-                          ),
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: ListView(
-                    controller: _scroll,
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                    children: [
-                      if (_thread.messages.isEmpty && !_streaming)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 24),
-                          child: Text(
-                            'Ask about a passage, prayer, doctrine, or how to walk in faith.',
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                  color: Bx.muted,
-                                ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      for (final m in _thread.messages)
-                        if (!_streaming || m.id != _streamingMessageId)
-                          if (m.role == 'assistant')
-                            AiAssistantMessage(
-                              content: m.content,
-                              messageId: m.id,
-                            )
-                          else
-                            AiUserMessage(content: m.content),
-                      if (_streaming)
-                        AiAssistantMessage(
-                          content: _streamBuffer,
-                          thinking: true,
-                          messageId: _streamingMessageId,
-                        ),
-                    ],
-                  ),
-                ),
-                SafeArea(
-                  top: false,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _input,
-                            enabled: !_streaming,
-                            minLines: 1,
-                            maxLines: 4,
-                            decoration: const InputDecoration(
-                              hintText: 'Ask in faith…',
-                            ),
-                            onSubmitted: (_) => _send(),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        IconButton.filled(
-                          onPressed: _streaming ? null : _send,
-                          icon: const Icon(Icons.send_rounded),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          child: SafeArea(child: body),
         ),
       ),
     );
   }
 }
-

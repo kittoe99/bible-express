@@ -562,6 +562,11 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _buildAskTab() {
+    // Desktop / web: Scripture lookup on the left, chatbot on the right.
+    if (!BxLayout.isCompact(context)) {
+      return const ChatbotScreen(embedded: true);
+    }
+
     final threads = ChatbotStore.instance.savedThreads;
     final signedIn = AuthService.instance.isSignedIn;
     final pending = ChatbotStore.instance.hasPendingCloudSync;
