@@ -28,10 +28,15 @@ RUN curl -fSL -o /tmp/flutter.tar.xz \
 
 ENV PATH="/opt/flutter/bin:/opt/flutter/bin/cache/dart-sdk/bin:${PATH}"
 
-# Warm the web toolchain and mark the SDK checkout as trusted for every user.
-RUN git config --system --add safe.directory /opt/flutter \
-    && flutter config --enable-web --no-analytics \
+# Mark the SDK checkout as trusted for every user (Flutter shells out to git).
+RUN git config --system --add safe.directory /opt/flutter
+
+# Run the remaining setup as the runtime user so all generated Flutter state
+# under /opt/flutter (bin/cache, flutter_tools/.dart_tool, ...) is owned by
+# `ubuntu`. Doing this as root would leave root-owned files the agent can't write.
+USER ubuntu
+
+# Warm the web toolchain so the first `flutter` invocation in an agent is fast.
+RUN flutter config --enable-web --no-analytics \
     && flutter precache --universal --web \
     && flutter --version
-
-USER ubuntu
